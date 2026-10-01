@@ -26,7 +26,6 @@ on:
 jobs:
   performance-test:
     name: Performance Test
-
     runs-on: ubuntu-latest
 
     outputs:
@@ -57,11 +56,8 @@ jobs:
 
   notify:
     name: Send Slack Notification
-
     needs: performance-test
-
     if: ${{ always() }}
-
     runs-on: ubuntu-latest
 
     steps:
@@ -73,12 +69,15 @@ jobs:
           if [ "$STATUS" = "success" ]; then
             EMOJI=":white_check_mark:"
             MESSAGE="Performance test completed successfully"
+
           elif [ "$STATUS" = "failure" ]; then
             EMOJI=":x:"
             MESSAGE="Performance test FAILED"
+
           elif [ "$STATUS" = "cancelled" ]; then
             EMOJI=":warning:"
             MESSAGE="Performance test was CANCELLED"
+
           else
             EMOJI=":grey_question:"
             MESSAGE="Performance test finished with status: $STATUS"
@@ -95,6 +94,8 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
           echo "Environment: ${{ needs.performance-test.outputs.environment }}"
           echo "Threads: ${{ needs.performance-test.outputs.threads }}"
           echo "Test result: ${{ needs.performance-test.result }}"
@@ -113,12 +114,18 @@ jobs:
 
           WORKFLOW: ${{ github.workflow }}
           RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+
           REPOSITORY: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
           ACTOR: ${{ github.actor }}
 
+          SERVER_URL: ${{ github.server_url }}
+
         run: |
+          RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+
           curl -X POST \
             -H "Content-Type: application/json" \
             --data "$(cat <<EOF
@@ -178,8 +185,21 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "GitHub Actions workflow: *${WORKFLOW}*"
+                  "text": "Workflow: *${WORKFLOW}*"
                 }
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View workflow run"
+                    },
+                    "url": "${RUN_URL}"
+                  }
+                ]
               }
             ]
           }
