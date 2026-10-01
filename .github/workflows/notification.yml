@@ -1,1 +1,188 @@
-name: notification
+name: Notifications - Slack
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Test environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+      threads:
+        description: "Number of threads"
+        required: true
+        default: "50"
+
+      run_test:
+        description: "Simulate test failure?"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  performance-test:
+    name: Performance Test
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      environment: ${{ steps.test-config.outputs.environment }}
+      threads: ${{ steps.test-config.outputs.threads }}
+
+    steps:
+      - name: Prepare test configuration
+        id: test-config
+        run: |
+          echo "environment=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          echo "threads=${{ inputs.threads }}" >> "$GITHUB_OUTPUT"
+
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Threads: ${{ inputs.threads }}"
+
+      - name: Run performance test
+        run: |
+          echo "Running performance test..."
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Threads: ${{ inputs.threads }}"
+
+      - name: Simulate test failure
+        if: ${{ inputs.run_test }}
+        run: |
+          echo "Simulating performance test failure..."
+          exit 1
+
+  notify:
+    name: Send Slack Notification
+
+    needs: performance-test
+
+    if: ${{ always() }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prepare notification data
+        id: notification
+        run: |
+          STATUS="${{ needs.performance-test.result }}"
+
+          if [ "$STATUS" = "success" ]; then
+            EMOJI=":white_check_mark:"
+            MESSAGE="Performance test completed successfully"
+          elif [ "$STATUS" = "failure" ]; then
+            EMOJI=":x:"
+            MESSAGE="Performance test FAILED"
+          elif [ "$STATUS" = "cancelled" ]; then
+            EMOJI=":warning:"
+            MESSAGE="Performance test was CANCELLED"
+          else
+            EMOJI=":grey_question:"
+            MESSAGE="Performance test finished with status: $STATUS"
+          fi
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "emoji=$EMOJI" >> "$GITHUB_OUTPUT"
+          echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Show notification data
+        run: |
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run number: ${{ github.run_number }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Environment: ${{ needs.performance-test.outputs.environment }}"
+          echo "Threads: ${{ needs.performance-test.outputs.threads }}"
+          echo "Test result: ${{ needs.performance-test.result }}"
+          echo "Notification job status: ${{ job.status }}"
+
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+          STATUS: ${{ steps.notification.outputs.status }}
+          EMOJI: ${{ steps.notification.outputs.emoji }}
+          MESSAGE: ${{ steps.notification.outputs.message }}
+
+          ENVIRONMENT: ${{ needs.performance-test.outputs.environment }}
+          THREADS: ${{ needs.performance-test.outputs.threads }}
+
+          WORKFLOW: ${{ github.workflow }}
+          RUN_NUMBER: ${{ github.run_number }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            --data "$(cat <<EOF
+          {
+            "text": "${EMOJI} ${MESSAGE}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Performance Test Notification"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Status:*\n${STATUS}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Environment:*\n${ENVIRONMENT}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Threads:*\n${THREADS}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Run:*\n#${RUN_NUMBER}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Repository:*\n${REPOSITORY}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Branch:*\n${BRANCH}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Actor:*\n${ACTOR}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Commit:*\n${COMMIT}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "GitHub Actions workflow: *${WORKFLOW}*"
+                }
+              }
+            ]
+          }
+          EOF
+          )" \
+            "$SLACK_WEBHOOK_URL"
